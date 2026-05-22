@@ -1,39 +1,62 @@
-import json
+"""Integration tests for the FastAPI contract."""
 
+from __future__ import annotations
+
+import numpy as np
 from fastapi.testclient import TestClient
 
-import main
 import clustering
+import main
 
 
-def dummy_embed(texts):
-    # simple deterministic embeddings
-    return [[float(i)] * 4 for i in range(len(texts))]
+class DummyModel:
+    """Deterministic embedding model used to keep API tests offline."""
+
+    def encode(self, texts, show_progress_bar=False, normalize_embeddings=True):  # noqa: D401
+        return np.asarray([[float(index)] * 4 for index, _ in enumerate(texts)], dtype=float)
 
 
-def test_analyze_endpoint(monkeypatch):
-    monkeypatch.setattr(clustering, "embed_conversations", lambda x: __import__("numpy").array(dummy_embed(x)))
-    client = TestClient(main.app)
-
-    payload = {"conversations": ["refund please", "I want a refund", "feature request: dark mode"]}
-    resp = client.post("/analyze", json=payload)
-    assert resp.status_code == 200
-    data = resp.json()
-    assert "clusters" in data and data["total_conversations"] == 3
+def _client(monkeypatch) -> TestClient:
+    monkeypatch.setattr(clustering, "load_embedding_model", lambda: DummyModel())
+    return TestClient(main.app)
 
 
-def test_store_conversations_and_get_insights(monkeypatch):
-    # Monkeypatch embeddings so /analyze doesn't attempt model download during other tests
-    monkeypatch.setattr(clustering, "embed_conversations", lambda x: __import__("numpy").array(dummy_embed(x)))
-    client = TestClient(main.app)
+def test_analyze_endpoint(monkeypatch) -> None:
+    """The analyze endpoint should return the new structured response."""
 
-    payload = {"conversations": ["a test conversation"]}
-    resp = client.post("/conversations", json=payload)
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["total_conversations"] == 1
+    client = _client(monkeypatch)
+    response = client.post(
+        "/api/v1/analyze",
+        json={
+            "conversations": [
+                "User: pricing is too high",
+                "User: love the new dashboard",
+                "User: bug when logging in",
+            ],
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "success"
+    assert payload["data"]["total_conversations"] == 3
+    assert payload["data"]["clusters"]
+    assert payload["data"]["metadata"]["clustering_algo"] == "kmeans"
 
-    # insights endpoint should return a list (may be empty)
-    resp2 = client.get("/insights")
-    assert resp2.status_code == 200
-    assert isinstance(resp2.json().get("insights"), list)
+
+def test_storage_and_cached_insights(monkeypatch) -> None:
+    """Batch storage and cached insight retrieval should both succeed."""
+
+    client = _client(monkeypatch)
+    storage = client.post(
+        "/api/v1/conversations/batch",
+        json={"conversations": ["User: need a refund", "User: please add Slack integration"], "source": "support_chat"},
+    )
+    assert storage.status_code == 201
+    assert storage.json()["stored_count"] == 2
+
+    insights = client.get("/api/v1/insights", params={"limit": 10, "offset": 0})
+    assert insights.status_code == 200
+    body = insights.json()
+    assert "insights" in body
+    assert "pagination" in body
+    assert body["cached"] is True

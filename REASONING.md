@@ -1,27 +1,63 @@
 # Architecture Reasoning
 
-I kept this project deliberately simple. The goal was not to build a research platform or a generic ML framework; it was to ship something the team could actually run, understand, and trust without a lot of moving parts.
+## 1. Problem Statement
 
-## Why I used sentence-transformers
+Agnost needs a service that turns raw user conversations into product intelligence. The system should show what users repeatedly ask for, where friction is concentrated, and which topics are growing, because product teams need quantified signals instead of a wall of unstructured chat logs. I treated this as a decision-support problem, not a pure machine learning exercise: the output has to be understandable enough that a PM can use it in a roadmap discussion without decoding the model.
 
-I chose `all-MiniLM-L6-v2` because it gives me strong semantic embeddings without turning the app into an API dependency story. The model is light enough to run locally, which keeps cost, latency, and operational complexity down. For this kind of batch clustering, I want stable embeddings that do one job well, not a heavyweight external service.
+## 2. Architecture Overview
 
-## Why I used K-means
+The main data flow is: conversations enter the API, embeddings are generated, KMeans groups semantically similar messages, the insight extractor labels those groups, and the database stores both the raw logs and the summarized output. The overall shape is documented in [DIAGRAMS.md](DIAGRAMS.md), but the important thing is that each step owns one job and has a narrow contract.
 
-K-means is the right tradeoff for this MVP because it is easy to explain and easy to tune. I can point to a cluster and say, "these conversations belong together" without needing a more complex density-based or hierarchical approach. I also like that it gives a clean number of buckets for PM reporting. I am not trying to discover every edge case here; I am trying to group the obvious themes quickly.
+- FastAPI handles validation, request orchestration, and response formatting.
+- The embedder isolates model loading so the rest of the app can stay testable.
+- The clusterer is deterministic and driven by silhouette search so cluster counts are explainable.
+- The insight extractor turns clusters into product-facing language and quantified metrics.
+- PostgreSQL stores the durable audit trail, cluster snapshots, and metadata for retrieval.
 
-## Why PostgreSQL, with SQLite as fallback
+## 3. Key Technical Decisions
 
-The data is naturally relational: conversations in one table, insights in another. PostgreSQL is the sensible production choice because it handles filtering, aggregation, and future reporting cleanly. SQLite stays in the project because it makes local setup painless. That way the repo still works on a laptop with no extra services, which matters for a weekend build.
+### Decision 1: Embedding Model
 
-## How I extract insights
+I chose `sentence-transformers` with `all-MiniLM-L6-v2`. The reason is mostly operational: it is fast, small enough to run locally, and good enough to separate support themes without making the app depend on an external API. Alternatives like hosted GPT embeddings would improve raw semantic quality, but they would add latency, cost, and a harder deployment story. The trade-off is that I accept slightly less semantic nuance in exchange for a service that is actually shippable in a weekend.
 
-Once the conversations are clustered, I run a simple keyword pass over each cluster with `CountVectorizer`. That gives me the terms people actually repeat inside the cluster. I then turn the strongest keyword into a short sentence like "X% of users in cluster_3 mention 'refund'". It is intentionally plain-language. The output should read like a note a PM might write after scanning a support inbox.
+### Decision 2: Clustering Algorithm
 
-## What I would change with more time
+I used KMeans with automatic `k` detection via silhouette score. That is a deliberate bias toward simplicity and repeatability. DBSCAN and hierarchical methods can be useful, but they are more parameter-sensitive or more expensive to scale, and they are harder to explain to a PM who just wants to know what themes exist. KMeans assumes roughly spherical clusters, which is a real limitation, but it is a good trade for topic grouping where interpretability matters more than perfect geometry.
 
-If I had a month instead of a weekend, I would spend it on product quality rather than algorithmic novelty. I would add a lightweight review flow for cluster labels, re-clustering over time so themes can be tracked week to week, and a basic dashboard for PMs. I would also tighten insight deduplication so repeated themes roll up into one narrative instead of appearing as separate rows.
+### Decision 3: Database
 
-## What I would not change
+PostgreSQL is the production database because the system needs ACID persistence, future reporting, and a schema that can evolve. I still keep the developer experience lightweight by allowing SQLite locally, but the real deployment path is Postgres. I also used JSON columns for flexible cluster payloads so the schema can hold richer metadata without forcing constant migrations. The trade-off is a hybrid relational/document style, but that is exactly what this use case wants.
 
-I would keep the core shape of the system the same. The model, the clustering step, and the database layout are already the right level of simplicity for this use case. The main improvement path is around clarity, reviewability, and trend tracking, not around introducing a more complicated ML stack.
+### Decision 4: Insight Extraction
+
+I chose keyword frequency plus a small sentiment lexicon instead of a transformer-based sentiment classifier or LLM summarization. That keeps the output explainable and cheap to run. It also means the system can produce quantifiable insights immediately, which is more valuable for a first version than trying to optimize for state-of-the-art sentiment accuracy. If we had more time, I would replace parts of this with a trained classifier and abstractive summaries.
+
+### Decision 5: Caching
+
+I used an in-memory cache for repeated analysis batches. It avoids recomputing embeddings and clustering for identical inputs, which is enough for a weekend build and keeps the behavior easy to reason about. Redis would be the obvious production evolution, but adding it now would increase operational surface area before the product value is proven. The trade-off is that cache state is process-local, which is acceptable for the current scope.
+
+## 4. Scaling Considerations
+
+- With 10K conversations, the current single-process API and Postgres setup is comfortable.
+- With 100K conversations, I would add Redis caching, background jobs, and batch-oriented processing.
+- With 1M conversations, I would shard by date or source, move to approximate clustering, and stream data through a queue like Kafka.
+
+The main scaling pressure is in embedding generation and clustering, not in request validation or database writes. That means the first scaling move should target CPU-heavy work, not the API surface.
+
+## 5. What Would Change With a Month
+
+If I had a month instead of a weekend, I would improve the system along the product path rather than just the algorithm path.
+
+- Add a transformer-based sentiment classifier for more accurate sentiment labels.
+- Add hierarchical topic modeling so clusters can split into sub-topics.
+- Add WebSocket or streaming updates so PMs can watch new themes arrive in real time.
+- Build a lightweight dashboard for trend viewing and cluster review.
+- Add full unit, integration, and contract test coverage.
+- Deploy with auto-scaling on AWS or GCP.
+- Add UMAP or similar visualization of embedding space.
+- Add a user feedback loop so PMs can mark insights as useful or noisy.
+- Add multi-language support and language detection.
+
+## 6. Why I Made the Trade-offs This Way
+
+I prioritized a working product over an elegant research stack. That means I chose interpretability over maximal model quality, deterministic heuristics over brittle novelty, and a narrow deployment story over distributed infrastructure. The system is designed so the obvious next improvements are additive, not disruptive. If the team later wants better sentiment quality or scale, the current structure makes it easy to swap in those pieces without throwing away the whole design.

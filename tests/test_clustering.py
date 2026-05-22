@@ -21,9 +21,11 @@ def test_embed_and_cluster_monkeypatch(monkeypatch):
     texts = ["a", "b", "c", "d"]
     # monkeypatch model loader so tests don't download models
     monkeypatch.setattr(clustering, "load_embedding_model", lambda: dummy_model())
-    labels, embeddings = clustering.cluster_conversations(texts)
+    labels, embeddings, optimal_k, silhouette_score = clustering.cluster_conversations(texts)
     assert len(labels) == len(texts)
     assert embeddings.shape[0] == len(texts)
+    assert optimal_k >= 1
+    assert silhouette_score >= 0.0
 
 
 def test_extract_top_keywords():
@@ -40,7 +42,7 @@ def test_build_cluster_results_monkeypatch(monkeypatch):
         "embed_conversations",
         lambda x: np.array([[0.0, 0.0], [0.2, 0.2], [1.0, 1.0], [1.2, 1.2]]),
     )
-    labels, _ = clustering.cluster_conversations(texts)
+    labels, _, _, _ = clustering.cluster_conversations(texts)
     results = clustering.build_cluster_results(texts, labels)
     assert isinstance(results, list)
     assert len(results) >= 1
