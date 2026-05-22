@@ -84,6 +84,34 @@ By default the app uses SQLite locally. Set `DATABASE_URL` to a PostgreSQL DSN w
 - `REASONING.md` - Architectural decisions, alternatives, and trade-offs.
 - `DIAGRAMS.md` - PlantUML diagrams for the system.
 
+## System Diagrams
+
+Below are visual diagrams that summarize the system from different perspectives. Use these on calls to explain actors, data flow, request sequencing, and deployment.
+
+### 1) Use Case
+
+![Use Case](diagrams/usecase.png)
+
+This diagram shows the three primary actors (Users, PMs, and the System) and the key use cases: Analyze conversations, Store conversations, View insights, Review topic clusters, and Track sentiment patterns. It emphasizes who produces data and who consumes the insights.
+
+### 2) System Architecture
+
+![System Architecture](diagrams/arch.png)
+
+This architecture diagram follows the linear data path: Client → FastAPI → Embedder → Clusterer → Insight Extractor → PostgreSQL. The ML steps are intentionally isolated from persistence and API transport to keep components testable and replaceable.
+
+### 3) Sequence Diagram
+
+![Sequence](diagrams/sequence.png)
+
+This sequence shows the lifecycle of an `/api/v1/analyze` request: validate & normalize, embed, cluster, summarize, persist, and respond. It highlights the synchronous compute steps that are candidates for backgrounding if throughput becomes a concern.
+
+### 4) Deployment Diagram
+
+![Deployment](diagrams/deployment.png)
+
+The deployment diagram illustrates the simple two-container setup used for demos: one API container and one PostgreSQL container. This minimal footprint simplifies local demos while retaining a clear path to horizontal scaling.
+
 ## Notes
 
 - The embedding model defaults to `all-MiniLM-L6-v2`.
