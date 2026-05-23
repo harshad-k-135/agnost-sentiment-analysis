@@ -10,13 +10,21 @@ FastAPI service that clusters user conversations, identifies sentiment patterns,
 - Returns quantified insights such as "23% of conversations mention pricing concerns."
 - Starts with one command through Docker Compose.
 
+## Prerequisites
+
+- Docker Engine with the Compose v2 plugin, or Docker Desktop on Linux if you prefer the bundled setup.
+- Python 3.10+ if you want to run the app directly without Docker.
+- An internet connection the first time you run analysis, so SentenceTransformers can download the embedding model.
+
 ## Quick Start
 
 ```bash
-docker-compose up
+docker compose up --build
 ```
 
 The API runs at `http://localhost:8000` and the interactive docs are available at `http://localhost:8000/docs`.
+
+Compose starts PostgreSQL, runs database migrations, and then launches the API container.
 
 ## Example API Calls
 
@@ -72,6 +80,8 @@ python main.py
 ```
 
 By default the app uses SQLite locally. Set `DATABASE_URL` to a PostgreSQL DSN when you want to run against a real database.
+
+If you are on Linux and do not already have Docker installed, install the Docker Engine and Compose plugin first, then rerun `docker compose up --build` from the repository root.
 
 ## Project Structure
 
